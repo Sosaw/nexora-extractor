@@ -4,8 +4,9 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "postinstall": "npx puppeteer browsers install chrome"
+    "render-build": "pup-install && node server.js",
+    "build": "npx puppeteer browsers install chrome",
+    "start": "node server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
