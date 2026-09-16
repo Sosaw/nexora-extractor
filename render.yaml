@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: nexora-extractor
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: PUPPETEER_CACHE_DIR=/opt/render/.cache/puppeteer npm install
+    startCommand: node server.js
+    envVars:
+      - key: PUPPETEER_CACHE_DIR
+        value: /opt/render/.cache/puppeteer
