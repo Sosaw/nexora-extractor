@@ -75,14 +75,15 @@ async function extraireVraiFlux(targetUrl) {
           getSubtitleInfo(url, index)
         );
 
+        console.log(`[EXTRACTION TERMINEE] Sous-titres capturés: ${subtitles.length}`);
         resolve({ streamUrl, subtitles });
       };
 
       const scheduleFinish = () => {
         clearTimeout(finishTimer);
-        // Vidzy demande les VTT au démarrage du lecteur : on laisse passer
-        // le burst de requêtes avant de fermer le navigateur d'extraction.
-        finishTimer = setTimeout(finish, 2500);
+        // Les VTT arrivent au démarrage du lecteur ; 750 ms suffisent
+        // pour laisser passer le burst sans ajouter plusieurs secondes d'attente.
+        finishTimer = setTimeout(finish, 750);
       };
 
       page.on('request', (req) => {
@@ -100,13 +101,19 @@ async function extraireVraiFlux(targetUrl) {
           return;
         }
 
-        // Sous-titres externes Vidzy : ils ne sont pas déclarés dans le master HLS.
+      });
+
+      // Les VTT Vidzy sont des ressources externes au manifest HLS.
+      // L'événement response fournit l'URL finale après les redirections
+      // srtproxy -> vidzy.live, ce qui évite de conserver l'URL du proxy.
+      page.on('response', (response) => {
+        const url = response.url();
         if (/\.vtt(?:\?|$)/i.test(url)) {
-          // Si Vidzy redirige le proxy srtproxy vers vidzy.live, conserver
-          // uniquement la dernière URL de la chaîne de redirection.
-          req.redirectChain().forEach(redirectedRequest => {
-            subtitleUrls.delete(redirectedRequest.url());
-          });
+          subtitleUrls.add(url);
+          console.log(`[VTT CAPTURE] ${response.status()} ${url}`);
+          if (streamUrl) scheduleFinish();
+        }
+      });
           subtitleUrls.add(url);
           if (streamUrl) scheduleFinish();
         }
