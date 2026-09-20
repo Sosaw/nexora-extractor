@@ -102,6 +102,11 @@ async function extraireVraiFlux(targetUrl) {
 
         // Sous-titres externes Vidzy : ils ne sont pas déclarés dans le master HLS.
         if (/\.vtt(?:\?|$)/i.test(url)) {
+          // Si Vidzy redirige le proxy srtproxy vers vidzy.live, conserver
+          // uniquement la dernière URL de la chaîne de redirection.
+          req.redirectChain().forEach(redirectedRequest => {
+            subtitleUrls.delete(redirectedRequest.url());
+          });
           subtitleUrls.add(url);
           if (streamUrl) scheduleFinish();
         }
