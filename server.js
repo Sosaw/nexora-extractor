@@ -95,6 +95,36 @@ async function extraireVraiFlux(targetUrl) {
       }
     }
 
+    let subtitleWindowResolve = null;
+    let subtitleWindowFinished = false;
+    let subtitleQuietTimer = null;
+    let subtitleMaxTimer = null;
+
+    const subtitleWindowDone = new Promise((resolve) => {
+      subtitleWindowResolve = resolve;
+    });
+
+    const finishSubtitleWindow = () => {
+      if (subtitleWindowFinished) return;
+      subtitleWindowFinished = true;
+      if (subtitleQuietTimer) clearTimeout(subtitleQuietTimer);
+      if (subtitleMaxTimer) clearTimeout(subtitleMaxTimer);
+      subtitleWindowResolve();
+    };
+
+    const armSubtitleWindow = () => {
+      if (subtitleWindowFinished || subtitleMaxTimer) return;
+
+      subtitleQuietTimer = setTimeout(finishSubtitleWindow, 500);
+      subtitleMaxTimer = setTimeout(finishSubtitleWindow, 1500);
+    };
+
+    const refreshSubtitleQuietTimer = () => {
+      if (subtitleWindowFinished) return;
+      if (subtitleQuietTimer) clearTimeout(subtitleQuietTimer);
+      subtitleQuietTimer = setTimeout(finishSubtitleWindow, 400);
+    };
+
     const streamPromise = new Promise((resolve) => {
       page.on('request', (req) => {
         const url = req.url();
@@ -103,6 +133,7 @@ async function extraireVraiFlux(targetUrl) {
         if (url.includes('.m3u8') && url.includes('master.m3u8') && !url.includes('troll') && !url.includes('fake')) {
           streamUrl = url;
           resolve(url);
+          armSubtitleWindow();
         }
 
         // Capture parallèle des sous-titres : même interception réseau
@@ -110,6 +141,7 @@ async function extraireVraiFlux(targetUrl) {
         if (/\.vtt(?:\?|$)/i.test(url)) {
           try {
             enregistrerSousTitre(url);
+            refreshSubtitleQuietTimer();
           } catch (error) {
             console.warn(`[VTT] Impossible d'identifier ${url}: ${error.message}`);
           }
@@ -131,36 +163,9 @@ async function extraireVraiFlux(targetUrl) {
 
     const streamResult = await Promise.race([streamPromise, timeoutPromise]);
 
-    // Après le master, on laisse seulement le temps nécessaire aux requêtes
-    // VTT déjà déclenchées. Une nouvelle requête VTT prolonge légèrement la
-    // fenêtre afin de récupérer toutes les pistes d'un même chargement.
-    await new Promise((resolve) => {
-      let finished = false;
-      let quietTimer = null;
-      let maxTimer = null;
-
-      const finish = () => {
-        if (finished) return;
-        finished = true;
-        if (quietTimer) clearTimeout(quietTimer);
-        if (maxTimer) clearTimeout(maxTimer);
-        resolve();
-      };
-
-      const onSubtitleRequest = () => {
-        if (quietTimer) clearTimeout(quietTimer);
-        quietTimer = setTimeout(finish, 400);
-      };
-
-      page.on('request', function subtitleWindowRequest(req) {
-        if (/\.vtt(?:\?|$)/i.test(req.url())) {
-          onSubtitleRequest();
-        }
-      });
-
-      quietTimer = setTimeout(finish, 700);
-      maxTimer = setTimeout(finish, 2000);
-    });
+    // Une fois le master détecté, attendre uniquement la fin des requêtes VTT
+    // déclenchées par le même chargement réseau.
+    await subtitleWindowDone;
 
     const result = {
       streamUrl: streamResult,
