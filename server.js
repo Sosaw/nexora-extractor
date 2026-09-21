@@ -28,124 +28,13 @@ async function extraireVraiFlux(targetUrl) {
 
     let streamUrl = null;
 
-    // Sous-titres Vidzy : collecte légère des URLs .vtt pendant que
-    // l'extraction du flux .m3u8 existante continue inchangée.
-    const subtitles = new Map();
-
-    const VIDZY_SUBTITLE_LANGUAGES = {
-      fre: { language: 'fr', label: 'Français' },
-      fra: { language: 'fr', label: 'Français' },
-      cat: { language: 'fr', label: 'Français' }, // Vidzy : contenu français
-      eng: { language: 'en', label: 'English' },
-      spa: { language: 'es', label: 'Español' },
-      deu: { language: 'de', label: 'Deutsch' },
-      ger: { language: 'de', label: 'Deutsch' },
-      ita: { language: 'it', label: 'Italiano' },
-      por: { language: 'pt', label: 'Português' },
-      jpn: { language: 'ja', label: '日本語' }
-    };
-
-    function identifierLangueSousTitre(url) {
-      try {
-        const pathname = new URL(url).pathname;
-        const filename = pathname.split('/').pop() || '';
-        const match = filename.match(/_([a-z]{3})\.vtt$/i);
-
-        if (!match) {
-          return {
-            language: 'und',
-            label: 'Sous-titres'
-          };
-        }
-
-        const code = match[1].toLowerCase();
-
-        return VIDZY_SUBTITLE_LANGUAGES[code] || {
-          language: 'und',
-          label: code.toUpperCase()
-        };
-      } catch {
-        return {
-          language: 'und',
-          label: 'Sous-titres'
-        };
-      }
-    }
-
-    function enregistrerSousTitre(url) {
-      const pathname = new URL(url).pathname;
-      const filename = pathname.split('/').pop() || url;
-      const langue = identifierLangueSousTitre(url);
-
-      // On préfère l'URL finale /vtt/ à l'URL proxy /srtproxy/
-      // lorsqu'elles correspondent au même fichier.
-      const priority = /\/vtt\//i.test(pathname) ? 2 : 1;
-      const key = filename.toLowerCase();
-      const previous = subtitles.get(key);
-
-      if (!previous || priority > previous.priority) {
-        subtitles.set(key, {
-          url,
-          language: langue.language,
-          label: langue.label,
-          priority
-        });
-
-        console.log(`[VTT] ${langue.label} → ${url}`);
-      }
-    }
-
-    let subtitleWindowResolve = null;
-    let subtitleWindowArmed = false;
-    let subtitleWindowFinished = false;
-    let subtitleQuietTimer = null;
-    let subtitleMaxTimer = null;
-
-    const subtitleWindowDone = new Promise((resolve) => {
-      subtitleWindowResolve = resolve;
-    });
-
-    const finishSubtitleWindow = () => {
-      if (subtitleWindowFinished) return;
-      subtitleWindowFinished = true;
-      if (subtitleQuietTimer) clearTimeout(subtitleQuietTimer);
-      if (subtitleMaxTimer) clearTimeout(subtitleMaxTimer);
-      subtitleWindowResolve();
-    };
-
-    const armSubtitleWindow = () => {
-      if (subtitleWindowFinished || subtitleWindowArmed) return;
-
-      subtitleWindowArmed = true;
-      subtitleMaxTimer = setTimeout(finishSubtitleWindow, 1500);
-    };
-
-    const refreshSubtitleQuietTimer = () => {
-      if (!subtitleWindowArmed || subtitleWindowFinished) return;
-      if (subtitleQuietTimer) clearTimeout(subtitleQuietTimer);
-      subtitleQuietTimer = setTimeout(finishSubtitleWindow, 400);
-    };
-
     const streamPromise = new Promise((resolve) => {
       page.on('request', (req) => {
         const url = req.url();
-
-        // Extraction du vrai flux : logique actuelle conservée à l'identique.
+        // Ignore les flux pièges de 18s et garde uniquement le vrai master.m3u8
         if (url.includes('.m3u8') && url.includes('master.m3u8') && !url.includes('troll') && !url.includes('fake')) {
           streamUrl = url;
           resolve(url);
-          armSubtitleWindow();
-        }
-
-        // Capture parallèle des sous-titres : même interception réseau
-        // que le flux, uniquement via l'URL de la requête.
-        if (/\.vtt(?:\?|$)/i.test(url)) {
-          try {
-            enregistrerSousTitre(url);
-            refreshSubtitleQuietTimer();
-          } catch (error) {
-            console.warn(`[VTT] Impossible d'identifier ${url}: ${error.message}`);
-          }
         }
       });
     });
@@ -162,17 +51,7 @@ async function extraireVraiFlux(targetUrl) {
       setTimeout(() => reject(new Error('Délai dépassé sans détection du vrai flux')), 20000)
     );
 
-    const streamResult = await Promise.race([streamPromise, timeoutPromise]);
-
-    // Une fois le master détecté, attendre uniquement la fin des requêtes VTT
-    // déclenchées par le même chargement réseau.
-    await subtitleWindowDone;
-
-    const result = {
-      streamUrl: streamResult,
-      subtitles: Array.from(subtitles.values()).map(({ priority, ...subtitle }) => subtitle)
-    };
-
+    const result = await Promise.race([streamPromise, timeoutPromise]);
     await browser.close();
     return result;
 
@@ -196,13 +75,8 @@ app.get('/api/extract', async (req, res) => {
   if (cache.has(cacheKey)) {
     const item = cache.get(cacheKey);
     if (now < item.expireAt) {
-      console.log(`[CACHE HIT] Flux + sous-titres servis instantanément pour ${cacheKey}`);
-      return res.json({
-        success: true,
-        streamUrl: item.streamUrl,
-        subtitles: item.subtitles || [],
-        fromCache: true
-      });
+      console.log(`[CACHE HIT] Flux servi instantanément pour ${cacheKey}`);
+      return res.json({ success: true, streamUrl: item.streamUrl, fromCache: true });
     }
     cache.delete(cacheKey);
   }
@@ -210,13 +84,8 @@ app.get('/api/extract', async (req, res) => {
   // Si une extraction est en cours pour ce média, on l'attend sans relancer un navigateur
   if (pendingRequests.has(cacheKey)) {
     try {
-      const result = await pendingRequests.get(cacheKey);
-      return res.json({
-        success: true,
-        streamUrl: result.streamUrl,
-        subtitles: result.subtitles || [],
-        fromCache: true
-      });
+      const streamUrl = await pendingRequests.get(cacheKey);
+      return res.json({ success: true, streamUrl, fromCache: true });
     } catch (e) {
       return res.status(500).json({ success: false, error: e.message });
     }
@@ -229,14 +98,10 @@ app.get('/api/extract', async (req, res) => {
   console.log(`[EXTRACTION ACTIVE] Récupération du flux réel pour : ${targetUrl}`);
 
   const task = extraireVraiFlux(targetUrl)
-    .then((result) => {
-      cache.set(cacheKey, {
-        streamUrl: result.streamUrl,
-        subtitles: result.subtitles || [],
-        expireAt: now + CACHE_TTL
-      });
+    .then((url) => {
+      cache.set(cacheKey, { streamUrl: url, expireAt: now + CACHE_TTL });
       pendingRequests.delete(cacheKey);
-      return result;
+      return url;
     })
     .catch((err) => {
       pendingRequests.delete(cacheKey);
@@ -246,13 +111,8 @@ app.get('/api/extract', async (req, res) => {
   pendingRequests.set(cacheKey, task);
 
   try {
-    const result = await task;
-    return res.json({
-      success: true,
-      streamUrl: result.streamUrl,
-      subtitles: result.subtitles || [],
-      fromCache: false
-    });
+    const streamUrl = await task;
+    return res.json({ success: true, streamUrl, fromCache: false });
   } catch (err) {
     console.error(`[ERREUR] ${err.message}`);
     return res.status(500).json({ success: false, error: err.message });
