@@ -96,6 +96,7 @@ async function extraireVraiFlux(targetUrl) {
     }
 
     let subtitleWindowResolve = null;
+    let subtitleWindowArmed = false;
     let subtitleWindowFinished = false;
     let subtitleQuietTimer = null;
     let subtitleMaxTimer = null;
@@ -113,14 +114,14 @@ async function extraireVraiFlux(targetUrl) {
     };
 
     const armSubtitleWindow = () => {
-      if (subtitleWindowFinished || subtitleMaxTimer) return;
+      if (subtitleWindowFinished || subtitleWindowArmed) return;
 
-      subtitleQuietTimer = setTimeout(finishSubtitleWindow, 500);
+      subtitleWindowArmed = true;
       subtitleMaxTimer = setTimeout(finishSubtitleWindow, 1500);
     };
 
     const refreshSubtitleQuietTimer = () => {
-      if (subtitleWindowFinished) return;
+      if (!subtitleWindowArmed || subtitleWindowFinished) return;
       if (subtitleQuietTimer) clearTimeout(subtitleQuietTimer);
       subtitleQuietTimer = setTimeout(finishSubtitleWindow, 400);
     };
